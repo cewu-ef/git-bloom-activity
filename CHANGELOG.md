@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Flowers move more: stems sway about three times as far, in a gusty rhythm
+  rather than a steady tick, petals turn a little with each swing, and leaves
+  flutter wider. Every mood is livelier in proportion.
+
 - A `demo` command writes a looping GIF that grows a flower through every stage
   from made-up activity; the README opens with it.
 
