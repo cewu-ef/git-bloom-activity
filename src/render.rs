@@ -392,18 +392,21 @@ impl Pose {
         let time = f64::from(frame_index % frames) / f64::from(frames);
         let shifted = f64::from((frame_index + phase_frames) % frames) / f64::from(frames);
         let wave = |cycles: f64| (TAU * cycles * shifted).sin();
+        // Two swings per loop with a quicker ripple on top, so the stems bend like
+        // they are catching gusts rather than ticking like a metronome.
+        let gusty = wave(2.0) + 0.3 * wave(5.0);
         let (sway, droop, openness, wither, spin) = match mood {
-            Mood::Sway => (0.06 * wave(2.0), 0.0, 1.0, 0.0, 0.0),
-            Mood::Burst => (0.10 * wave(3.0), 0.0, 1.0, 0.0, 0.10 * wave(1.0)),
+            Mood::Sway => (0.17 * gusty, 0.0, 1.0, 0.0, 0.05 * wave(3.0)),
+            Mood::Burst => (0.24 * wave(3.0), 0.0, 1.0, 0.0, 0.16 * wave(1.0)),
             Mood::Unfold => (
-                0.03 * wave(2.0),
+                0.09 * gusty,
                 0.0,
                 0.62 + 0.38 * (0.5 + 0.5 * (TAU * shifted).cos()),
                 0.0,
                 0.0,
             ),
-            Mood::Rest => (0.025 * wave(1.0), 0.5, 0.74, 0.25, 0.0),
-            Mood::Wilt => (0.012 * wave(1.0), 0.9, 0.6, 0.75, 0.0),
+            Mood::Rest => (0.06 * wave(1.0), 0.5, 0.74, 0.25, 0.0),
+            Mood::Wilt => (0.03 * wave(1.0), 0.9, 0.6, 0.75, 0.0),
         };
         Self {
             mood,
@@ -468,7 +471,7 @@ impl Scene {
             for side in [-1.0, 1.0] {
                 leaves.push(Leaf {
                     root: head_center,
-                    angle: head_angle + side * (1.05 + 0.08 * pose.flutter + 0.4 * pose.wither),
+                    angle: head_angle + side * (1.05 + 0.2 * pose.flutter + 0.4 * pose.wither),
                     length: lerp(3.0, 6.0, flower.stem_height / 20.0),
                     width: lerp(1.8, 3.4, flower.stem_height / 20.0),
                     round: true,
@@ -487,7 +490,7 @@ impl Scene {
                 leaves.push(Leaf {
                     root: stem[point],
                     angle: angle_at(along)
-                        + side * (0.95 - 0.15 * along + 0.07 * pose.flutter + 0.55 * pose.wither),
+                        + side * (0.95 - 0.15 * along + 0.18 * pose.flutter + 0.55 * pose.wither),
                     length,
                     width: length * 0.36,
                     round: false,
