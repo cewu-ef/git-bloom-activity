@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+- A `demo` command writes a looping GIF that grows a flower through every stage
+  from made-up activity; the README opens with it.
+
 ## [0.3.0] - 2026-11-02
 
 - Languages show as a ring of petals behind the pink ones, shared out by code

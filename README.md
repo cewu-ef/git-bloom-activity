@@ -6,6 +6,14 @@ the back petals and a band on the pot, its weekly streaks add leaves and shine,
 and the day that just ended decides how it moves. A nightly workflow puts the
 pot in the repository's README as a looping GIF.
 
+<p align="center">
+  <img src="docs/demo.gif" width="256" alt="A pot of pixel-art flowers swaying as it grows from an empty pot to a sprout, a bud, one pink flower, and finally five, the way a repository's flower would grow as its commits pile up" />
+</p>
+
+The animation above fast-forwards a made-up repository from its first commit to
+its ten-thousandth. A real repository shows one frame of that story, redrawn
+each night.
+
 <img src="docs/stages.png" width="640" alt="Top row: seed, sprout, bud, pale young flower, and a second flower arriving. Middle row: three and five flowers, then a pot swaying, bursting with pollen, and unfolding. Bottom row: resting, wilting, and three pots for other language mixes. Every pot has pink front petals, language-colored petals behind them, and language stripes on the pot." />
 
 ## What the flower shows
@@ -95,7 +103,8 @@ signed in with access to the repository.
    stretch shows resting or wilting. Languages always come from the repository
    as it is today.
 
-4. Show every stage and mood at once with [docs/stages.png](docs/stages.png).
+4. Show the whole growth story with [docs/demo.gif](docs/demo.gif), and every
+   stage and mood at once with [docs/stages.png](docs/stages.png).
 
 To prove the Action runs under the organization's settings without writing to
 the repository, push a test branch with a read-only workflow that uploads the
@@ -163,6 +172,7 @@ are left out.
 ```sh
 cargo test
 cargo run -- sheet --output docs/stages.png
+cargo run -- demo --output docs/demo.gif
 cargo run -- render --repo-dir ../some-repo --repository OWNER/NAME --output-dir bloom
 ```
 

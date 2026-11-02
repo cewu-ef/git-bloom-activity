@@ -13,6 +13,7 @@ use git_bloom_activity::render::{BloomFrame, frame_count, render_frame};
 const USAGE: &str = "Usage: git-bloom-activity render --output-dir DIR [--repo-dir DIR]
                           [--repository OWNER/NAME] [--observed-on YYYY-MM-DD]
        git-bloom-activity sheet --output FILE
+       git-bloom-activity demo --output FILE
        git-bloom-activity --help | --version
 render reads the repository checked out in --repo-dir (default: the current
 directory) and writes bloom.gif, bloom.png, and preview.html into DIR. Commits come
@@ -20,6 +21,8 @@ from git; languages come from GitHub through an authenticated `gh` (in Actions, 
 GH_TOKEN). The repository name defaults to GITHUB_REPOSITORY, else what `gh` reports.
 The observation date defaults to yesterday in UTC, the last complete day.
 sheet writes a PNG of every stage and mood, drawn from made-up activity.
+demo writes a looping GIF that grows a flower through every stage, from the same
+made-up activity, for documentation.
 Errors go to stderr and exit 1; invalid usage exits 2.";
 
 fn main() -> ExitCode {
@@ -39,6 +42,7 @@ fn main() -> ExitCode {
             None => return usage_error(),
         },
         ["sheet", "--output", output_path] => run_sheet(Path::new(output_path)),
+        ["demo", "--output", output_path] => run_demo(Path::new(output_path)),
         _ => return usage_error(),
     };
     match result {
@@ -166,6 +170,31 @@ fn run_sheet(output_path: &Path) -> Result<(), String> {
     }
     let bytes = encode_sheet_png(&frames, 5, [246, 248, 250, 255], 3)
         .map_err(|error| format!("PNG encoding failed: {error}"))?;
+    replace_file(output_path, &bytes)
+}
+
+/// Commit totals the demo passes through, one per stage and flower count, and how many
+/// swaying frames each is held for. The sway carries on across the cuts, and the last
+/// total lingers for a whole loop before the GIF starts over.
+const DEMO_STEPS: [(u64, u32); 7] = [
+    (0, 30),
+    (4, 30),
+    (18, 30),
+    (60, 45),
+    (400, 45),
+    (2_500, 45),
+    (10_000, 120),
+];
+
+fn run_demo(output_path: &Path) -> Result<(), String> {
+    let mut frames = Vec::new();
+    for (total_commits, held_frames) in DEMO_STEPS {
+        let development = sample_development(total_commits, 12, 30);
+        for _ in 0..held_frames {
+            frames.push(render_frame(&development, Mood::Sway, frames.len() as u32));
+        }
+    }
+    let bytes = encode_gif(&frames).map_err(|error| error.to_string())?;
     replace_file(output_path, &bytes)
 }
 
