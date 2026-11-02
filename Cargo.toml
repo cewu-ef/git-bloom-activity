@@ -1,0 +1,17 @@
+[package]
+name = "git-bloom-activity"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Grow a pixel-art flower from one repository's commit history, as a looping GIF for its README."
+license = "MIT"
+publish = false
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+gif = { version = "0.14", default-features = false, features = ["std"] }
+png = "0.18"
+serde_json = "1"
+
+[profile.dev]
+opt-level = 1

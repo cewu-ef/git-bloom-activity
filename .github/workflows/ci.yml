@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked
+
+  action:
+    # Runs the Action on this repository, the way a user's workflow would.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./
+        with:
+          output-dir: bloom-output
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bloom
+          path: bloom-output/
+          if-no-files-found: error

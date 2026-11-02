@@ -1,0 +1,40 @@
+# Copy into a repository as .github/workflows/bloom.yml, then embed
+# <img src="bloom/bloom.gif" width="256" alt="This repository's flower"> in its README.md.
+name: Bloom
+
+on:
+  schedule:
+    # Just after midnight UTC, so the flower shows the day that just ended.
+    - cron: "20 0 * * *"
+  workflow_dispatch:
+  push:
+    paths: [.github/workflows/bloom.yml]
+
+permissions:
+  contents: write
+
+concurrency: bloom
+
+jobs:
+  bloom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The flower reads the whole history; a shallow clone would hide it.
+          fetch-depth: 0
+      - uses: OWNER/git-bloom-activity@main
+        with:
+          output-dir: bloom
+      - name: Commit the flower if it changed
+        shell: bash
+        run: |
+          git add bloom/bloom.gif
+          if git diff --cached --quiet; then
+            echo "The flower is unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --quiet --message "bloom: grow the day's flower"
+          git push --quiet

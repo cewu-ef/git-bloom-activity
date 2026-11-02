@@ -1,0 +1,42 @@
+name: git-bloom-activity
+description:
+  Grow a pixel-art flower from this repository's commit history, as a looping
+  GIF for its README.
+branding:
+  icon: sun
+  color: green
+
+inputs:
+  output-dir:
+    description:
+      Folder, relative to the workspace, that receives bloom.gif, bloom.png, and
+      preview.html.
+    default: bloom
+  repository:
+    description: Repository whose languages to read, as OWNER/NAME.
+    default: ${{ github.repository }}
+  token:
+    description:
+      Token for reading the repository's languages; the built-in token is
+      enough, private repositories included.
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build git-bloom-activity
+      shell: bash
+      run: |
+        target_dir="$RUNNER_TEMP/git-bloom-activity-target"
+        cargo build --release --locked --quiet \
+          --manifest-path "$GITHUB_ACTION_PATH/Cargo.toml" --target-dir "$target_dir"
+        echo "$target_dir/release" >> "$GITHUB_PATH"
+    - name: Grow the flower
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        BLOOM_REPOSITORY: ${{ inputs.repository }}
+        BLOOM_OUTPUT_DIR: ${{ inputs.output-dir }}
+      run:
+        git-bloom-activity render --repo-dir "$GITHUB_WORKSPACE" --repository
+        "$BLOOM_REPOSITORY" --output-dir "$BLOOM_OUTPUT_DIR"
