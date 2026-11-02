@@ -33,8 +33,7 @@ commits and Dependabot, are left out. Dates are author dates in UTC.
 ## Add it to a repository
 
 1. Copy [examples/bloom-workflow.yml](examples/bloom-workflow.yml) into the
-   repository as `.github/workflows/bloom.yml`, and replace `OWNER` with the
-   account that hosts this Action.
+   repository as `.github/workflows/bloom.yml`.
 2. Embed the flower in the repository's `README.md`:
 
    ```html

@@ -23,7 +23,7 @@ jobs:
         with:
           # The flower reads the whole history; a shallow clone would hide it.
           fetch-depth: 0
-      - uses: OWNER/git-bloom-activity@main
+      - uses: cewu-ef/git-bloom-activity@main
         with:
           output-dir: bloom
       - name: Commit the flower if it changed
