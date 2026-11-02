@@ -3,7 +3,9 @@ use git_bloom_activity::activity::parse_hex_color;
 use git_bloom_activity::growth::{BloomDevelopment, PetalLanguage};
 use git_bloom_activity::mood::MOODS;
 use git_bloom_activity::output::encode_gif;
-use git_bloom_activity::render::{BloomFrame, CANVAS_PIXELS, frame_count, render_frame};
+use git_bloom_activity::render::{
+    BloomFrame, CANVAS_PIXELS, flower_count, frame_count, render_frame,
+};
 
 fn development(total_commits: u64, seed: u64, languages: &[(&str, &str, f64)]) -> BloomDevelopment {
     BloomDevelopment {
@@ -108,4 +110,39 @@ fn every_stage_and_mood_stays_inside_the_canvas_and_encodes() {
             }
         }
     }
+}
+
+#[test]
+fn more_commits_grow_more_flowers() {
+    let counts: Vec<usize> = [40, 150, 600, 2_000, 6_000, 50_000]
+        .into_iter()
+        .map(flower_count)
+        .collect();
+    assert_eq!(counts, [1, 2, 3, 4, 5, 5]);
+}
+
+#[test]
+fn pink_leads_whatever_the_languages() {
+    let frame = render_frame(
+        &development(3_000, 5, &[("Go", "#00ADD8", 1.0)]),
+        MOODS[0],
+        0,
+    );
+    let pixels: Vec<&[u8]> = frame
+        .as_rgba_bytes()
+        .chunks(4)
+        .filter(|pixel| pixel[3] != 0)
+        .collect();
+    let pink = pixels
+        .iter()
+        .filter(|pixel| pixel[0] > 150 && pixel[0] as u32 > pixel[1] as u32 + 50 && pixel[2] > 80)
+        .count();
+    let cyan = pixels
+        .iter()
+        .filter(|pixel| pixel[2] > 150 && pixel[0] < 100)
+        .count();
+    assert!(
+        pink > cyan * 5,
+        "{pink} pink pixels, {cyan} language-colored ones"
+    );
 }

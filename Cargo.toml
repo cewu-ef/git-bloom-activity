@@ -1,6 +1,6 @@
 [package]
 name = "git-bloom-activity"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Grow a pixel-art flower from one repository's commit history, as a looping GIF for its README."

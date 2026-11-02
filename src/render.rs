@@ -1,12 +1,13 @@
-//! A potted pixel-art flower grown from a [`BloomDevelopment`], drawn frame by frame.
+//! A pot of pink pixel-art flowers grown from a [`BloomDevelopment`], drawn frame by frame.
 //!
 //! The pot never changes. The commit total sets the stage and size: a seed, a sprout
-//! with two seed leaves, a bud, then an open flower whose stem, leaves, head, and
-//! petal count keep growing with diminishing gains. Each petal is one language's
-//! color, so the ring reads like a pie of the repository's code. The running weekly
-//! streak adds leaves, and the longest streak makes the petals more vivid and, past
-//! half a year, makes them glint. The mood sets the motion of one seamless loop.
-//! Identical inputs give identical pixels without I/O or clock reads.
+//! with two seed leaves, a bud, then an open pink flower that keeps growing with
+//! diminishing gains. More flowers join as commits pile up, each arriving as a bud
+//! and opening later. Every flower's center takes one of the repository's top
+//! languages' colors, largest language on the main flower. The running weekly streak
+//! adds leaves, and the longest streak makes the petals more vivid and, past half a
+//! year, makes them glint. The mood sets the motion of one seamless loop. Identical
+//! inputs give identical pixels without I/O or clock reads.
 
 use std::f64::consts::{PI, TAU};
 
@@ -19,11 +20,15 @@ use crate::mood::Mood;
 pub const CANVAS_PIXELS: u32 = 128;
 /// Frames per second of every loop.
 pub const FRAMES_PER_SECOND: u32 = 15;
+/// Commit totals at which the second, third, fourth, and fifth flowers appear as buds.
+/// Each opens once the total reaches half again its threshold.
+pub const EXTRA_FLOWER_COMMITS: [u64; 4] = [150, 600, 2_000, 6_000];
 
 const CANVAS: usize = CANVAS_PIXELS as usize;
 const POT_CENTER_X: f64 = 64.0;
 const SOIL_Y: f64 = 106.0;
 const FIT_MARGIN: f64 = 3.0;
+const EXTRA_FLOWER_OPENING: f64 = 1.5;
 
 type Rgb = [u8; 3];
 type Ramp = [Rgb; 4];
@@ -38,14 +43,10 @@ const POT_RAMP: Ramp = [
     [228, 152, 104],
 ];
 const SOIL_RAMP: Ramp = [[46, 30, 30], [70, 46, 38], [96, 66, 48], [122, 88, 60]];
-const GOLD_RAMP: Ramp = [
-    [150, 82, 30],
-    [206, 130, 40],
-    [244, 186, 64],
-    [255, 228, 132],
-];
+const GOLD: Rgb = [244, 186, 64];
 const BROWN_RAMP: Ramp = [[52, 32, 28], [88, 54, 36], [128, 84, 50], [170, 120, 70]];
-const DEFAULT_PETAL: Rgb = [232, 108, 150];
+/// The petal pinks, main flower first; extra flowers cycle through the others.
+const PINKS: [Rgb; 3] = [[240, 104, 156], [248, 146, 186], [226, 84, 136]];
 const WITHER_BROWN: [f64; 3] = [146.0, 102.0, 64.0];
 const POLLEN: [u8; 4] = [255, 226, 120, 255];
 const GLINT: [u8; 4] = [255, 255, 255, 255];
@@ -78,116 +79,205 @@ pub fn frame_count(mood: Mood) -> u32 {
     }
 }
 
+/// How many flowers a commit total grows, one through five.
+pub fn flower_count(total_commits: u64) -> usize {
+    1 + EXTRA_FLOWER_COMMITS
+        .iter()
+        .filter(|&&threshold| total_commits >= threshold)
+        .count()
+}
+
 /// Draw one frame of the mood's loop; frame numbers wrap around the loop. Frame zero
 /// makes a good still.
 pub fn render_frame(development: &BloomDevelopment, mood: Mood, frame_index: u32) -> BloomFrame {
-    let plant = Plant::new(development);
-    let shift = fit_loop(&plant, mood);
-    let pose = Pose::new(mood, frame_index % frame_count(mood));
-    let scene = Scene::build(&plant, &pose, shift);
+    let garden = Garden::new(development);
+    let fit = fit_loop(&garden, mood);
+    let frame_index = frame_index % frame_count(mood);
     let mut canvas = Canvas::new();
-    paint_stem(&mut canvas, &plant, &pose, &scene);
-    paint_pot(&mut canvas, shift, plant.stage == Stage::Seed);
-    for leaf in &scene.leaves {
-        paint_leaf(&mut canvas, leaf, &pose);
+    let scenes: Vec<(usize, Pose, Scene)> = garden
+        .drawing_order()
+        .into_iter()
+        .map(|index| {
+            let flower = &garden.flowers[index];
+            let pose = Pose::new(mood, frame_index, flower.phase_frames);
+            let scene = Scene::build(flower, &pose, fit);
+            (index, pose, scene)
+        })
+        .collect();
+    for (index, pose, scene) in &scenes {
+        let flower = &garden.flowers[*index];
+        paint_stem(&mut canvas, flower, pose, scene);
+        for leaf in &scene.leaves {
+            paint_leaf(&mut canvas, leaf, pose);
+        }
+        match flower.stage {
+            Stage::Seed | Stage::Sprout => {}
+            Stage::Bud => paint_bud(&mut canvas, &garden, flower, pose, scene),
+            Stage::Bloom => paint_flower(&mut canvas, &garden, flower, pose, scene),
+        }
     }
-    match plant.stage {
-        Stage::Seed | Stage::Sprout => {}
-        Stage::Bud => paint_bud(&mut canvas, &plant, &pose, &scene),
-        Stage::Bloom => paint_flower(&mut canvas, &plant, &pose, &scene),
+    paint_pot(
+        &mut canvas,
+        fit.shift,
+        garden.flowers[0].stage == Stage::Seed,
+    );
+    if let Some((_, pose, scene)) = scenes.iter().find(|(index, _, _)| *index == 0) {
+        paint_effects(&mut canvas, &garden, &garden.flowers[0], pose, scene);
     }
-    paint_effects(&mut canvas, &plant, &pose, &scene);
     canvas.outline();
     BloomFrame {
         rgba_pixels: canvas.pixels,
     }
 }
 
-/// What the development fixes for every frame.
-struct Plant {
-    stage: Stage,
+/// What the development fixes for every flower and frame.
+struct Garden {
     seed: u64,
+    flowers: Vec<Flower>,
+    language_colors: Vec<Option<Rgb>>,
+    vividness: f64,
+    paleness: f64,
+    glint: f64,
+}
+
+/// One flower in the pot; the first is the main one, in the middle and in front.
+struct Flower {
+    index: usize,
+    stage: Stage,
     stem_height: f64,
     stem_half_width: f64,
     head_radius: f64,
     bud_progress: f64,
     leaf_length: f64,
     leaf_count: usize,
+    first_leaf_side: f64,
     lean: f64,
+    base_offset: f64,
     droop_side: f64,
     petal_phase: f64,
-    /// Index into `petal_colors` for each petal, going around the ring.
-    petal_languages: Vec<usize>,
-    petal_colors: Vec<Option<Rgb>>,
-    vividness: f64,
-    paleness: f64,
-    glint: f64,
-    dark_center: bool,
+    petal_count: usize,
+    pink: Rgb,
+    /// Loop frames this flower runs ahead, so the flowers do not move in lockstep.
+    phase_frames: u32,
 }
 
-impl Plant {
+impl Garden {
     fn new(development: &BloomDevelopment) -> Self {
         let total = development.total_commits;
-        let stage = development.stage();
         let seed = development.identity_seed;
         let growth = growth_fraction(total);
+        let mirror = if unit(seed, 2) < 0.5 { -1.0 } else { 1.0 };
+        let main_stage = development.stage();
+        let main_height = match main_stage {
+            Stage::Seed => 0.0,
+            _ => lerp(9.0, 64.0, growth),
+        };
         let bloom_growth = growth_fraction(BLOOM_COMMITS);
         let bud_growth = growth_fraction(BUD_COMMITS);
-        let head_progress =
+        let main_progress =
             smooth_step(((growth - bloom_growth) / (1.0 - bloom_growth)).clamp(0.0, 1.0));
-        let bud_progress = ((growth - bud_growth) / (bloom_growth - bud_growth)).clamp(0.0, 1.0);
-        let stem_height = match stage {
-            Stage::Seed => 0.0,
-            _ => lerp(9.0, 68.0, growth),
-        };
-        let languages = &development.languages;
-        let petal_count = (5.0 + (head_progress * 3.0).round() + (seed % 2) as f64) as usize;
-        let petal_count = petal_count.max(languages.len());
         let streak_leaves = (development.current_streak_weeks / 2).min(4) as usize;
-        let leaf_count = match stage {
-            Stage::Seed => 0,
-            Stage::Sprout => 2,
-            Stage::Bud => 1 + streak_leaves.min(1),
-            Stage::Bloom => 2 + streak_leaves,
-        }
-        .min(((stem_height / 9.0) as usize).max(2));
-        let longest = f64::from(development.longest_streak_weeks);
-        let vividness = if longest < 4.0 {
-            0.72
-        } else {
-            lerp(0.92, 1.25, ((longest - 4.0) / 48.0).min(1.0))
-        };
-        let top_color = languages.first().and_then(|language| language.color);
-        let dark_center = top_color.is_some_and(|[red, green, blue]| {
-            red > 180 && green > 140 && f64::from(blue) < f64::from(green) * 0.7
-        });
-        Self {
-            stage,
-            seed,
-            stem_height,
-            stem_half_width: lerp(0.8, 1.7, growth),
-            head_radius: lerp(9.0, 21.0, head_progress),
-            bud_progress,
-            leaf_length: lerp(5.0, 17.0, growth),
-            leaf_count,
-            lean: (unit(seed, 1) - 0.5) * 0.24,
-            droop_side: if unit(seed, 2) < 0.5 { -1.0 } else { 1.0 },
-            petal_phase: unit(seed, 3) * TAU,
-            petal_languages: assign_petals(development, petal_count),
-            petal_colors: if languages.is_empty() {
-                vec![Some(DEFAULT_PETAL)]
+        let mut flowers = Vec::new();
+        for index in 0..flower_count(total) {
+            let (stage, progress, bud_progress, height) = if index == 0 {
+                (
+                    main_stage,
+                    main_progress,
+                    ((growth - bud_growth) / (bloom_growth - bud_growth)).clamp(0.0, 1.0),
+                    main_height,
+                )
             } else {
-                languages.iter().map(|language| language.color).collect()
+                let threshold = EXTRA_FLOWER_COMMITS[index - 1];
+                let opening = (threshold as f64 * EXTRA_FLOWER_OPENING) as u64;
+                let start = growth_fraction(threshold);
+                let open = growth_fraction(opening);
+                let progress = ((growth - open) / (1.0 - open)).clamp(0.0, 1.0);
+                let stage = if total >= opening {
+                    Stage::Bloom
+                } else {
+                    Stage::Bud
+                };
+                let bud_progress = ((growth - start) / (open - start)).clamp(0.0, 1.0);
+                let height = main_height * lerp(0.5, 0.7, (growth - start) / (1.0 - start))
+                    - 7.0 * ((index - 1) / 2) as f64;
+                (stage, smooth_step(progress), bud_progress, height)
+            };
+            // Extra flowers alternate sides, the later pair further out.
+            let side = if index == 0 {
+                0.0
+            } else if index % 2 == 1 {
+                mirror
+            } else {
+                -mirror
+            };
+            let outer = if index >= 3 { 1.0 } else { 0.0 };
+            let main_scale = if index == 0 { 1.0 } else { 0.62 };
+            let leaf_count = match stage {
+                Stage::Seed => 0,
+                Stage::Sprout => 2,
+                Stage::Bud if index == 0 => 1 + streak_leaves.min(1),
+                Stage::Bud => 1,
+                Stage::Bloom if index == 0 => 2 + streak_leaves,
+                Stage::Bloom => 1 + streak_leaves / 2,
+            }
+            .min(((height / 9.0) as usize).max(if index == 0 { 2 } else { 1 }));
+            flowers.push(Flower {
+                index,
+                stage,
+                stem_height: height,
+                stem_half_width: lerp(0.8, 1.7, growth) * if index == 0 { 1.0 } else { 0.8 },
+                head_radius: lerp(9.0, 17.0, progress) * main_scale,
+                bud_progress,
+                leaf_length: lerp(5.0, 15.0, growth) * if index == 0 { 1.0 } else { 0.75 },
+                leaf_count,
+                first_leaf_side: if unit(seed, 10 + index as u64) < 0.5 {
+                    -1.0
+                } else {
+                    1.0
+                },
+                lean: if index == 0 {
+                    (unit(seed, 1) - 0.5) * 0.12
+                } else {
+                    side * (0.58 + 0.22 * outer + (unit(seed, 20 + index as u64) - 0.5) * 0.08)
+                },
+                base_offset: side * (4.0 + 3.0 * outer),
+                droop_side: if index == 0 { mirror } else { side },
+                petal_phase: unit(seed, 3 + 100 * index as u64) * TAU,
+                petal_count: 5 + (progress * 3.0).round() as usize + ((seed >> index) % 2) as usize,
+                pink: PINKS[if index == 0 { 0 } else { 1 + (index - 1) % 2 }],
+                phase_frames: (unit(seed, 30 + index as u64) * 40.0) as u32 * u32::from(index > 0),
+            });
+        }
+        let longest = f64::from(development.longest_streak_weeks);
+        Self {
+            seed,
+            flowers,
+            language_colors: development
+                .languages
+                .iter()
+                .map(|language| language.color)
+                .collect(),
+            vividness: if longest < 4.0 {
+                0.75
+            } else {
+                lerp(0.92, 1.2, ((longest - 4.0) / 48.0).min(1.0))
             },
-            vividness,
-            paleness: (1.0 - total as f64 / FULL_COLOR_COMMITS as f64).max(0.0) * 0.55,
+            paleness: (1.0 - total as f64 / FULL_COLOR_COMMITS as f64).max(0.0) * 0.5,
             glint: ((longest - 26.0) / 78.0).clamp(0.0, 1.0),
-            dark_center,
         }
     }
 
-    fn petal_ramp(&self, language_index: usize, pose: &Pose) -> Ramp {
-        let color = self.petal_colors[language_index].unwrap_or([190, 178, 214]);
+    /// Outer flowers first, the main flower last, so nearer flowers cover farther ones.
+    fn drawing_order(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..self.flowers.len()).collect();
+        order.sort_by_key(|&index| match index {
+            0 => 9,
+            index => 5 - index,
+        });
+        order
+    }
+
+    fn color_ramp(&self, color: Rgb, pose: &Pose) -> Ramp {
         let mut channels = color.map(f64::from);
         channels = saturate(channels, self.vividness * (1.0 - 0.45 * pose.wither));
         let luminance = luminance(channels);
@@ -202,47 +292,26 @@ impl Plant {
         channels = mix(channels, WITHER_BROWN, pose.wither * 0.45);
         build_ramp(channels)
     }
+
+    fn petal_ramp(&self, flower: &Flower, pose: &Pose) -> Ramp {
+        self.color_ramp(flower.pink, pose)
+    }
+
+    /// The flower's center: one of the top languages, the largest on the main flower.
+    fn center_ramp(&self, flower: &Flower, pose: &Pose) -> Ramp {
+        let color = match self.language_colors.len() {
+            0 => GOLD,
+            count => self.language_colors[flower.index % count].unwrap_or(GOLD),
+        };
+        blend_ramps(
+            &self.color_ramp(color, pose),
+            &BROWN_RAMP,
+            pose.wither * 0.5,
+        )
+    }
 }
 
-/// Spread petals across languages by share, largest remainder first, every language
-/// getting at least one petal, in contiguous runs around the ring.
-fn assign_petals(development: &BloomDevelopment, petal_count: usize) -> Vec<usize> {
-    let languages = &development.languages;
-    if languages.is_empty() {
-        return vec![0; petal_count];
-    }
-    let mut counts: Vec<usize> = vec![1; languages.len()];
-    let spare = petal_count - languages.len();
-    let ideal: Vec<f64> = languages
-        .iter()
-        .map(|language| language.share * petal_count as f64 - 1.0)
-        .collect();
-    let mut remainders: Vec<(usize, f64)> = Vec::new();
-    let mut given = 0;
-    for (index, &wanted) in ideal.iter().enumerate() {
-        let whole = wanted.max(0.0).floor() as usize;
-        counts[index] += whole;
-        given += whole;
-        remainders.push((index, wanted.max(0.0) - whole as f64));
-    }
-    remainders.sort_by(|left, right| right.1.total_cmp(&left.1).then(left.0.cmp(&right.0)));
-    for &(index, _) in remainders.iter().cycle().take(spare.saturating_sub(given)) {
-        counts[index] += 1;
-    }
-    while counts.iter().sum::<usize>() > petal_count {
-        let largest = (0..counts.len())
-            .max_by_key(|&index| counts[index])
-            .unwrap();
-        counts[largest] -= 1;
-    }
-    counts
-        .iter()
-        .enumerate()
-        .flat_map(|(index, &count)| std::iter::repeat_n(index, count))
-        .collect()
-}
-
-/// What the mood sets for one frame.
+/// What the mood sets for one frame of one flower.
 struct Pose {
     mood: Mood,
     /// Loop position from zero to one.
@@ -256,21 +325,23 @@ struct Pose {
 }
 
 impl Pose {
-    fn new(mood: Mood, frame_index: u32) -> Self {
-        let time = f64::from(frame_index) / f64::from(frame_count(mood));
-        let wave = |cycles: f64| (TAU * cycles * time).sin();
+    fn new(mood: Mood, frame_index: u32, phase_frames: u32) -> Self {
+        let frames = frame_count(mood);
+        let time = f64::from(frame_index % frames) / f64::from(frames);
+        let shifted = f64::from((frame_index + phase_frames) % frames) / f64::from(frames);
+        let wave = |cycles: f64| (TAU * cycles * shifted).sin();
         let (sway, droop, openness, wither, spin) = match mood {
             Mood::Sway => (0.06 * wave(2.0), 0.0, 1.0, 0.0, 0.0),
             Mood::Burst => (0.10 * wave(3.0), 0.0, 1.0, 0.0, 0.10 * wave(1.0)),
             Mood::Unfold => (
                 0.03 * wave(2.0),
                 0.0,
-                0.62 + 0.38 * (0.5 + 0.5 * (TAU * time).cos()),
+                0.62 + 0.38 * (0.5 + 0.5 * (TAU * shifted).cos()),
                 0.0,
                 0.0,
             ),
-            Mood::Rest => (0.025 * wave(1.0), 0.55, 0.74, 0.25, 0.0),
-            Mood::Wilt => (0.012 * wave(1.0), 0.95, 0.6, 0.75, 0.0),
+            Mood::Rest => (0.025 * wave(1.0), 0.5, 0.74, 0.25, 0.0),
+            Mood::Wilt => (0.012 * wave(1.0), 0.9, 0.6, 0.75, 0.0),
         };
         Self {
             mood,
@@ -293,7 +364,7 @@ struct Leaf {
     round: bool,
 }
 
-/// Where everything is in one frame.
+/// Where one flower is in one frame.
 struct Scene {
     stem: Vec<[f64; 2]>,
     head_center: [f64; 2],
@@ -302,16 +373,27 @@ struct Scene {
     leaves: Vec<Leaf>,
 }
 
+/// How the whole loop is placed: one horizontal shift, and how far the side flowers
+/// fan out, so every frame fits.
+#[derive(Clone, Copy)]
+struct Fit {
+    shift: f64,
+    spread: f64,
+}
+
 impl Scene {
-    fn build(plant: &Plant, pose: &Pose, shift: f64) -> Self {
+    fn build(flower: &Flower, pose: &Pose, fit: Fit) -> Self {
         const SEGMENTS: usize = 40;
         let angle_at = |along: f64| {
-            plant.lean * along
+            flower.lean * fit.spread * (0.6 + 0.4 * along)
                 + pose.sway * along.powf(1.5)
-                + plant.droop_side * pose.droop * along.powf(2.5)
+                + flower.droop_side * pose.droop * along.powf(2.5)
         };
-        let step = plant.stem_height / SEGMENTS as f64;
-        let mut stem = vec![[POT_CENTER_X + shift, SOIL_Y + 2.0]];
+        let step = flower.stem_height / SEGMENTS as f64;
+        let mut stem = vec![[
+            POT_CENTER_X + fit.shift + flower.base_offset * fit.spread,
+            SOIL_Y + 2.0,
+        ]];
         for segment in 0..SEGMENTS {
             let angle = angle_at((segment as f64 + 0.5) / SEGMENTS as f64);
             let [x, y] = stem[segment];
@@ -320,27 +402,26 @@ impl Scene {
         let head_angle = angle_at(1.0);
         let head_center = *stem.last().unwrap();
         let mut leaves = Vec::new();
-        if plant.stage == Stage::Sprout {
+        if flower.stage == Stage::Sprout {
             for side in [-1.0, 1.0] {
                 leaves.push(Leaf {
                     root: head_center,
                     angle: head_angle + side * (1.05 + 0.08 * pose.flutter + 0.4 * pose.wither),
-                    length: lerp(3.0, 6.0, plant.stem_height / 20.0),
-                    width: lerp(1.8, 3.4, plant.stem_height / 20.0),
+                    length: lerp(3.0, 6.0, flower.stem_height / 20.0),
+                    width: lerp(1.8, 3.4, flower.stem_height / 20.0),
                     round: true,
                 });
             }
         } else {
-            let first_side = if unit(plant.seed, 4) < 0.5 { -1.0 } else { 1.0 };
-            for index in 0..plant.leaf_count {
-                let along = 0.16 + 0.56 * (index as f64 + 0.5) / plant.leaf_count as f64;
+            for index in 0..flower.leaf_count {
+                let along = 0.16 + 0.56 * (index as f64 + 0.5) / flower.leaf_count as f64;
                 let side = if index % 2 == 0 {
-                    first_side
+                    flower.first_leaf_side
                 } else {
-                    -first_side
+                    -flower.first_leaf_side
                 };
                 let point = (along * SEGMENTS as f64).round() as usize;
-                let length = plant.leaf_length * (1.0 - 0.3 * along);
+                let length = flower.leaf_length * (1.0 - 0.3 * along);
                 leaves.push(Leaf {
                     root: stem[point],
                     angle: angle_at(along)
@@ -355,20 +436,20 @@ impl Scene {
             stem,
             head_center,
             head_angle,
-            squash: 1.0 - 0.38 * (pose.droop / 1.0).min(1.0),
+            squash: 1.0 - 0.38 * pose.droop.min(1.0),
             leaves,
         }
     }
 
-    /// The leftmost and rightmost columns this frame can reach.
-    fn horizontal_extent(&self, plant: &Plant) -> [f64; 2] {
-        let mut extent = [POT_CENTER_X - 19.0, POT_CENTER_X + 19.0];
+    /// The leftmost and rightmost columns this flower can reach in this frame.
+    fn horizontal_extent(&self, flower: &Flower) -> [f64; 2] {
+        let mut extent = [f64::INFINITY, f64::NEG_INFINITY];
         let mut include = |x: f64| {
             extent[0] = extent[0].min(x);
             extent[1] = extent[1].max(x);
         };
-        let head_reach = match plant.stage {
-            Stage::Bloom => plant.head_radius * 1.1,
+        let head_reach = match flower.stage {
+            Stage::Bloom => flower.head_radius * 1.1,
             Stage::Bud => 7.0,
             _ => 0.0,
         };
@@ -381,22 +462,38 @@ impl Scene {
     }
 }
 
-/// One horizontal shift for the whole loop, keeping every frame inside the canvas.
-fn fit_loop(plant: &Plant, mood: Mood) -> f64 {
-    let mut extent = [f64::INFINITY, f64::NEG_INFINITY];
-    for frame_index in 0..frame_count(mood) {
-        let pose = Pose::new(mood, frame_index);
-        let [left, right] = Scene::build(plant, &pose, 0.0).horizontal_extent(plant);
-        extent = [extent[0].min(left), extent[1].max(right)];
+/// Choose one placement for the whole loop: fan the side flowers out as far as fits,
+/// then shift everything sideways to keep every frame inside the canvas.
+fn fit_loop(garden: &Garden, mood: Mood) -> Fit {
+    let room = CANVAS as f64 - 2.0 * FIT_MARGIN;
+    let mut fallback = Fit {
+        shift: 0.0,
+        spread: 0.3,
+    };
+    for step in 0..8 {
+        let spread = 1.0 - 0.1 * step as f64;
+        let trial = Fit { shift: 0.0, spread };
+        let mut extent = [POT_CENTER_X - 19.0, POT_CENTER_X + 19.0];
+        for frame_index in 0..frame_count(mood) {
+            for flower in &garden.flowers {
+                let pose = Pose::new(mood, frame_index, flower.phase_frames);
+                let [left, right] = Scene::build(flower, &pose, trial).horizontal_extent(flower);
+                extent = [extent[0].min(left), extent[1].max(right)];
+            }
+        }
+        let shift = if extent[1] > FIT_MARGIN + room {
+            FIT_MARGIN + room - extent[1]
+        } else if extent[0] < FIT_MARGIN {
+            FIT_MARGIN - extent[0]
+        } else {
+            0.0
+        };
+        fallback = Fit { shift, spread };
+        if extent[1] - extent[0] <= room {
+            return fallback;
+        }
     }
-    let limit = CANVAS as f64 - FIT_MARGIN;
-    if extent[1] > limit {
-        (limit - extent[1]).max(FIT_MARGIN - extent[0])
-    } else if extent[0] < FIT_MARGIN {
-        FIT_MARGIN - extent[0]
-    } else {
-        0.0
-    }
+    fallback
 }
 
 struct Canvas {
@@ -454,12 +551,12 @@ impl Canvas {
     }
 }
 
-fn paint_stem(canvas: &mut Canvas, plant: &Plant, pose: &Pose, scene: &Scene) {
-    if plant.stage == Stage::Seed {
+fn paint_stem(canvas: &mut Canvas, flower: &Flower, pose: &Pose, scene: &Scene) {
+    if flower.stage == Stage::Seed {
         return;
     }
     let ramp = blend_ramps(&GREEN_RAMP, &DRY_RAMP, pose.wither);
-    let half_width = plant.stem_half_width;
+    let half_width = flower.stem_half_width;
     let (min, max) = bounds(&scene.stem, half_width + 1.0);
     canvas.each_in(min, max, |canvas, x, y| {
         let point = [x as f64 + 0.5, y as f64 + 0.5];
@@ -578,10 +675,10 @@ fn head_world(scene: &Scene, local: [f64; 2]) -> [f64; 2] {
     ]
 }
 
-fn paint_bud(canvas: &mut Canvas, plant: &Plant, pose: &Pose, scene: &Scene) {
-    let radius = lerp(2.6, 5.2, plant.bud_progress);
+fn paint_bud(canvas: &mut Canvas, garden: &Garden, flower: &Flower, pose: &Pose, scene: &Scene) {
+    let radius = lerp(2.6, 5.2, flower.bud_progress);
     let sepal_ramp = blend_ramps(&GREEN_RAMP, &DRY_RAMP, pose.wither);
-    let petal_ramp = plant.petal_ramp(plant.petal_languages[0], pose);
+    let petal_ramp = garden.petal_ramp(flower, pose);
     let reach = radius * 2.6;
     let center = scene.head_center;
     canvas.each_in(
@@ -597,7 +694,7 @@ fn paint_bud(canvas: &mut Canvas, plant: &Plant, pose: &Pose, scene: &Scene) {
             if across.abs() > half_width {
                 return;
             }
-            let sepal_line = 0.62 - 0.3 * plant.bud_progress + 0.2 * across.abs() / radius;
+            let sepal_line = 0.62 - 0.3 * flower.bud_progress + 0.2 * across.abs() / radius;
             let brightness = 0.55 - 0.35 * across / radius.max(1.0) + 0.15 * along;
             let ramp = if along < sepal_line {
                 &sepal_ramp
@@ -616,23 +713,13 @@ struct PetalHit {
     petal: usize,
 }
 
-fn paint_flower(canvas: &mut Canvas, plant: &Plant, pose: &Pose, scene: &Scene) {
-    let radius = plant.head_radius;
+fn paint_flower(canvas: &mut Canvas, garden: &Garden, flower: &Flower, pose: &Pose, scene: &Scene) {
+    let radius = flower.head_radius;
     let center_radius = (radius * 0.3).max(2.5);
-    let petal_count = plant.petal_languages.len();
+    let petal_count = flower.petal_count;
     let petal_length = (radius - center_radius * 0.5) * pose.openness;
-    let ramps: Vec<Ramp> = (0..plant.petal_colors.len())
-        .map(|index| plant.petal_ramp(index, pose))
-        .collect();
-    let center_ramp = blend_ramps(
-        if plant.dark_center {
-            &BROWN_RAMP
-        } else {
-            &GOLD_RAMP
-        },
-        &BROWN_RAMP,
-        pose.wither,
-    );
+    let petal_ramp = garden.petal_ramp(flower, pose);
+    let center_ramp = garden.center_ramp(flower, pose);
     let slot = TAU / petal_count as f64;
     let middle = center_radius * 0.55 + petal_length / 2.0;
     let half_length = petal_length / 2.0 + center_radius * 0.45;
@@ -652,7 +739,7 @@ fn paint_flower(canvas: &mut Canvas, plant: &Plant, pose: &Pose, scene: &Scene) 
                 let mut brightness = 0.55 + 0.35 * (up - across) / (2f64.sqrt() * center_radius);
                 let cell = [(across * 0.9).floor() as i64, (up * 0.9).floor() as i64];
                 if unit(
-                    plant.seed ^ (cell[0] as u64).wrapping_mul(73_856_093),
+                    garden.seed ^ (cell[0] as u64).wrapping_mul(73_856_093),
                     cell[1] as u64,
                 ) < 0.2
                 {
@@ -667,7 +754,7 @@ fn paint_flower(canvas: &mut Canvas, plant: &Plant, pose: &Pose, scene: &Scene) 
             let ring_hit = |offset: f64, length_scale: f64| -> Option<PetalHit> {
                 let mut best: Option<PetalHit> = None;
                 for petal in 0..petal_count {
-                    let petal_angle = plant.petal_phase + pose.spin + offset + petal as f64 * slot;
+                    let petal_angle = flower.petal_phase + pose.spin + offset + petal as f64 * slot;
                     let delta = angle - petal_angle;
                     let lengthwise = distance_out * delta.cos() - middle * length_scale;
                     let sideways = distance_out * delta.sin();
@@ -691,8 +778,7 @@ fn paint_flower(canvas: &mut Canvas, plant: &Plant, pose: &Pose, scene: &Scene) 
                     None => return,
                 },
             };
-            let petal_angle = plant.petal_phase + pose.spin + offset + hit.petal as f64 * slot;
-            let ramp = &ramps[plant.petal_languages[hit.petal]];
+            let petal_angle = flower.petal_phase + pose.spin + offset + hit.petal as f64 * slot;
             let mut brightness = 0.5 + 0.2 * hit.along - 0.1 * hit.across.abs()
                 + 0.12 * (petal_angle - light_angle).cos()
                 - darkening;
@@ -705,43 +791,51 @@ fn paint_flower(canvas: &mut Canvas, plant: &Plant, pose: &Pose, scene: &Scene) 
             if hit.distance > 0.78 {
                 brightness = 0.02;
             }
-            canvas.set(x, y, shade_with(ramp, brightness, x, y, 0.4));
+            canvas.set(x, y, shade_with(&petal_ramp, brightness, x, y, 0.4));
         },
     );
 }
 
-fn paint_effects(canvas: &mut Canvas, plant: &Plant, pose: &Pose, scene: &Scene) {
+/// Effects belong to the main flower: glints, pollen, sun sparkles, a falling petal.
+fn paint_effects(
+    canvas: &mut Canvas,
+    garden: &Garden,
+    flower: &Flower,
+    pose: &Pose,
+    scene: &Scene,
+) {
     let head = scene.head_center;
-    let radius = plant.head_radius;
-    if plant.stage == Stage::Bloom && plant.glint > 0.0 {
-        let petal_count = plant.petal_languages.len();
+    let radius = flower.head_radius;
+    let seed = garden.seed;
+    if flower.stage == Stage::Bloom && garden.glint > 0.0 {
+        let petal_count = flower.petal_count;
         let petal_length = (radius - radius * 0.15) * pose.openness;
         for petal in 0..petal_count {
-            if unit(plant.seed, 100 + petal as u64) > plant.glint * 0.7 + 0.15 {
+            if unit(seed, 100 + petal as u64) > garden.glint * 0.7 + 0.15 {
                 continue;
             }
-            let twinkle = (TAU * (2.0 * pose.time + unit(plant.seed, 200 + petal as u64))).sin();
+            let twinkle = (TAU * (2.0 * pose.time + unit(seed, 200 + petal as u64))).sin();
             if twinkle < -0.2 {
                 continue;
             }
-            let angle = plant.petal_phase + pose.spin + petal as f64 * TAU / petal_count as f64;
+            let angle = flower.petal_phase + pose.spin + petal as f64 * TAU / petal_count as f64;
             let out = radius * 0.3 + petal_length * 0.6;
             let [x, y] = head_world(scene, [out * angle.cos(), out * angle.sin()]);
             canvas.set(x as i64, y as i64, GLINT);
         }
     }
     match pose.mood {
-        Mood::Burst if plant.stage == Stage::Bloom => {
+        Mood::Burst if flower.stage == Stage::Bloom => {
             for grain in 0..14u64 {
                 let rise = (2.0 * pose.time + grain as f64 / 14.0).fract();
                 if rise > 0.9 {
                     continue;
                 }
                 let start = [
-                    head[0] + (unit(plant.seed, 300 + grain) - 0.5) * radius * 0.5,
-                    head[1] + (unit(plant.seed, 400 + grain) - 0.5) * radius * 0.4,
+                    head[0] + (unit(seed, 300 + grain) - 0.5) * radius * 0.5,
+                    head[1] + (unit(seed, 400 + grain) - 0.5) * radius * 0.4,
                 ];
-                let drift = (unit(plant.seed, 500 + grain) - 0.5) * 30.0;
+                let drift = (unit(seed, 500 + grain) - 0.5) * 30.0;
                 let x = start[0] + drift * rise + (TAU * (rise + grain as f64 * 0.3)).sin() * 2.0;
                 let y = start[1] - rise * (start[1] - FIT_MARGIN - 1.0).min(40.0);
                 canvas.set(
@@ -754,16 +848,15 @@ fn paint_effects(canvas: &mut Canvas, plant: &Plant, pose: &Pose, scene: &Scene)
                 }
             }
         }
-        Mood::Unfold if plant.stage >= Stage::Bud => {
-            let ring = if plant.stage == Stage::Bloom {
+        Mood::Unfold if flower.stage >= Stage::Bud => {
+            let ring = if flower.stage == Stage::Bloom {
                 radius * 1.25 + 3.0
             } else {
                 10.0
             };
             for spark in 0..3u64 {
-                let angle = -PI / 2.0
-                    + (spark as f64 - 1.0) * 0.9
-                    + (unit(plant.seed, 600 + spark) - 0.5) * 0.4;
+                let angle =
+                    -PI / 2.0 + (spark as f64 - 1.0) * 0.9 + (unit(seed, 600 + spark) - 0.5) * 0.4;
                 let pulse = (TAU * (pose.time * 2.0 + spark as f64 / 3.0)).sin();
                 if pulse < 0.0 {
                     continue;
@@ -778,19 +871,19 @@ fn paint_effects(canvas: &mut Canvas, plant: &Plant, pose: &Pose, scene: &Scene)
                 }
             }
         }
-        Mood::Wilt if plant.stage == Stage::Bloom => {
+        Mood::Wilt if flower.stage == Stage::Bloom => {
             let fall = pose.time;
             if !(0.04..0.92).contains(&fall) {
                 return;
             }
-            let side = plant.droop_side;
+            let side = flower.droop_side;
             let start = [head[0] + side * radius * 0.5, head[1] + radius * 0.3];
             let end_y = SOIL_Y - 4.0;
             let position = [
                 start[0] + side * 12.0 * fall + (TAU * 2.0 * fall).sin() * 3.0,
                 lerp(start[1], end_y, fall),
             ];
-            let ramp = plant.petal_ramp(plant.petal_languages[0], pose);
+            let ramp = garden.petal_ramp(flower, pose);
             let spin = TAU * 2.0 * fall;
             let axis = [spin.cos(), spin.sin()];
             canvas.each_in(

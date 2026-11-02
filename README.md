@@ -1,22 +1,24 @@
 # git-bloom-activity
 
-git-bloom-activity grows a pixel-art flower from one repository's commit
-history. Its languages color the petals, its commits grow the plant, its weekly
-streaks add leaves and shine, and the day that just ended decides how it moves.
-A nightly workflow puts the flower in the repository's README as a looping GIF.
+git-bloom-activity grows a pot of pink pixel-art flowers from one repository's
+commit history. Its commits grow the plant and add flowers, its languages color
+the flower centers, its weekly streaks add leaves and shine, and the day that
+just ended decides how it moves. A nightly workflow puts the pot in the
+repository's README as a looping GIF.
 
-<img src="docs/stages.png" width="640" alt="Top row: seed, sprout, bud, pale young bloom, and full bloom. Middle row: a large bloom and a very large bloom, then a bloom swaying, bursting with pollen, and unfolding. Bottom row: resting, wilting, and three single- or two-language flowers." />
+<img src="docs/stages.png" width="640" alt="Top row: seed, sprout, bud, pale young flower, and a second flower arriving. Middle row: three and five flowers, then a pot swaying, bursting with pollen, and unfolding. Bottom row: resting, wilting, and three pots with other language colors in their centers." />
 
 ## What the flower shows
 
-| Repository                  | Flower                                                                                                                |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Total commits               | Seed at 0, sprout from 1, bud from 10, open flower from 40; keeps growing with diminishing gains up to 10,000         |
-| Languages                   | Each petal takes a language's GitHub color, in proportion to its share of the code; the top four languages get petals |
-| Young repositories          | Petals show pale until 250 commits                                                                                    |
-| Current weekly streak       | One extra leaf per two active weeks, up to four                                                                       |
-| Longest weekly streak       | Petals grow more vivid up to a year; past half a year they glint                                                      |
-| Yesterday's activity (mood) | See below                                                                                                             |
+| Repository                  | Flower                                                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Total commits               | Seed at 0, sprout from 1, bud from 10, open flower from 40; keeps growing with diminishing gains up to 10,000                   |
+| More commits                | A second flower buds at 150, a third at 600, a fourth at 2,000, and a fifth at 6,000; each opens at half again its threshold    |
+| Languages                   | Petals are always pink; each flower's center takes one of the top four languages' GitHub colors, the largest on the main flower |
+| Young repositories          | Petals show pale until 250 commits                                                                                              |
+| Current weekly streak       | One extra leaf per two active weeks, up to four                                                                                 |
+| Longest weekly streak       | Petals grow more vivid up to a year; past half a year they glint                                                                |
+| Yesterday's activity (mood) | See below                                                                                                                       |
 
 A week counts toward a streak when it has at least one commit, Monday through
 Sunday. Merge commits and commits by GitHub Apps, such as this workflow's own
