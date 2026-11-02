@@ -3,8 +3,9 @@
 //! The pot never changes. The commit total sets the stage and size: a seed, a sprout
 //! with two seed leaves, a bud, then an open pink flower that keeps growing with
 //! diminishing gains. More flowers join as commits pile up, each arriving as a bud
-//! and opening later. Every flower's center takes one of the repository's top
-//! languages' colors, largest language on the main flower. The running weekly streak
+//! and opening later. Behind each flower's pink petals sits a second ring in the
+//! repository's language colors, each language taking petals in proportion to its
+//! share of the code, and a striped band around the pot shows the same shares. The running weekly streak
 //! adds leaves, and the longest streak makes the petals more vivid and, past half a
 //! year, makes them glint. The mood sets the motion of one seamless loop. Identical
 //! inputs give identical pixels without I/O or clock reads.
@@ -116,10 +117,19 @@ pub fn render_frame(development: &BloomDevelopment, mood: Mood, frame_index: u32
             Stage::Bloom => paint_flower(&mut canvas, &garden, flower, pose, scene),
         }
     }
+    let band: Vec<(Ramp, f64)> = {
+        let pose = Pose::new(mood, frame_index, 0);
+        garden
+            .language_ramps(&pose)
+            .into_iter()
+            .zip(garden.language_shares.iter().copied())
+            .collect()
+    };
     paint_pot(
         &mut canvas,
         fit.shift,
         garden.flowers[0].stage == Stage::Seed,
+        &band,
     );
     if let Some((_, pose, scene)) = scenes.iter().find(|(index, _, _)| *index == 0) {
         paint_effects(&mut canvas, &garden, &garden.flowers[0], pose, scene);
@@ -133,6 +143,7 @@ pub fn render_frame(development: &BloomDevelopment, mood: Mood, frame_index: u32
 /// What the development fixes for every flower and frame.
 struct Garden {
     seed: u64,
+    language_shares: Vec<f64>,
     flowers: Vec<Flower>,
     language_colors: Vec<Option<Rgb>>,
     vividness: f64,
@@ -156,6 +167,8 @@ struct Flower {
     droop_side: f64,
     petal_phase: f64,
     petal_count: usize,
+    /// The language each petal shows, going around the ring.
+    petal_languages: Vec<usize>,
     pink: Rgb,
     /// Loop frames this flower runs ahead, so the flowers do not move in lockstep.
     phase_frames: u32,
@@ -244,13 +257,25 @@ impl Garden {
                 droop_side: if index == 0 { mirror } else { side },
                 petal_phase: unit(seed, 3 + 100 * index as u64) * TAU,
                 petal_count: 5 + (progress * 3.0).round() as usize + ((seed >> index) % 2) as usize,
+                petal_languages: Vec::new(),
                 pink: PINKS[if index == 0 { 0 } else { 1 + (index - 1) % 2 }],
                 phase_frames: (unit(seed, 30 + index as u64) * 40.0) as u32 * u32::from(index > 0),
             });
         }
+        let language_shares: Vec<f64> = development
+            .languages
+            .iter()
+            .map(|language| language.share)
+            .collect();
+        for flower in &mut flowers {
+            flower.petal_count = flower.petal_count.max(language_shares.len());
+            flower.petal_languages =
+                assign_petals(&language_shares, flower.petal_count, flower.index);
+        }
         let longest = f64::from(development.longest_streak_weeks);
         Self {
             seed,
+            language_shares,
             flowers,
             language_colors: development
                 .languages
@@ -297,18 +322,55 @@ impl Garden {
         self.color_ramp(flower.pink, pose)
     }
 
-    /// The flower's center: one of the top languages, the largest on the main flower.
-    fn center_ramp(&self, flower: &Flower, pose: &Pose) -> Ramp {
-        let color = match self.language_colors.len() {
-            0 => GOLD,
-            count => self.language_colors[flower.index % count].unwrap_or(GOLD),
-        };
-        blend_ramps(
-            &self.color_ramp(color, pose),
-            &BROWN_RAMP,
-            pose.wither * 0.5,
-        )
+    fn language_ramps(&self, pose: &Pose) -> Vec<Ramp> {
+        self.language_colors
+            .iter()
+            .map(|color| self.color_ramp(color.unwrap_or([190, 178, 214]), pose))
+            .collect()
     }
+
+    /// Every flower's center is gold.
+    fn center_ramp(&self, pose: &Pose) -> Ramp {
+        blend_ramps(&self.color_ramp(GOLD, pose), &BROWN_RAMP, pose.wither * 0.5)
+    }
+}
+
+/// Share petals out across languages by code share, largest remainder first, every
+/// language getting at least one petal when there are enough, in contiguous runs that
+/// start at a different place on each flower.
+fn assign_petals(shares: &[f64], petal_count: usize, flower_index: usize) -> Vec<usize> {
+    if shares.is_empty() || petal_count == 0 {
+        return vec![0; petal_count];
+    }
+    let mut counts: Vec<usize> = shares
+        .iter()
+        .map(|share| ((share * petal_count as f64).floor() as usize).max(1))
+        .collect();
+    let mut order: Vec<usize> = (0..shares.len()).collect();
+    order.sort_by(|&left, &right| {
+        let remainder = |index: usize| shares[index] * petal_count as f64 % 1.0;
+        remainder(right)
+            .total_cmp(&remainder(left))
+            .then(left.cmp(&right))
+    });
+    let mut cursor = 0;
+    while counts.iter().sum::<usize>() < petal_count {
+        counts[order[cursor % order.len()]] += 1;
+        cursor += 1;
+    }
+    while counts.iter().sum::<usize>() > petal_count {
+        let largest = (0..counts.len())
+            .max_by_key(|&index| counts[index])
+            .unwrap();
+        counts[largest] -= 1;
+    }
+    let mut petals: Vec<usize> = counts
+        .iter()
+        .enumerate()
+        .flat_map(|(index, &count)| std::iter::repeat_n(index, count))
+        .collect();
+    petals.rotate_left((flower_index * 2) % petal_count);
+    petals
 }
 
 /// What the mood sets for one frame of one flower.
@@ -576,7 +638,7 @@ fn paint_stem(canvas: &mut Canvas, flower: &Flower, pose: &Pose, scene: &Scene) 
     });
 }
 
-fn paint_pot(canvas: &mut Canvas, shift: f64, seed_only: bool) {
+fn paint_pot(canvas: &mut Canvas, shift: f64, seed_only: bool, band: &[(Ramp, f64)]) {
     let center = POT_CENTER_X + shift;
     canvas.each_in(
         [center - 19.0, SOIL_Y - 3.0],
@@ -603,6 +665,20 @@ fn paint_pot(canvas: &mut Canvas, shift: f64, seed_only: bool) {
                 return;
             }
             let brightness = base - 0.5 * px / half_width;
+            let band_rows = (SOIL_Y + 8.0)..(SOIL_Y + 13.0);
+            if !band.is_empty() && band_rows.contains(&row) {
+                let across = ((px / half_width + 1.0) / 2.0).clamp(0.0, 0.9999);
+                let mut start = 0.0;
+                for (band_ramp, share) in band {
+                    if across < start + share {
+                        let edge = row == band_rows.start || row == band_rows.end - 1.0;
+                        let shine = if edge { -0.25 } else { 0.1 };
+                        canvas.set(x, y, shade_with(band_ramp, brightness + shine, x, y, 0.6));
+                        return;
+                    }
+                    start += share;
+                }
+            }
             canvas.set(x, y, shade_with(ramp, brightness, x, y, 0.6));
         },
     );
@@ -718,8 +794,17 @@ fn paint_flower(canvas: &mut Canvas, garden: &Garden, flower: &Flower, pose: &Po
     let center_radius = (radius * 0.3).max(2.5);
     let petal_count = flower.petal_count;
     let petal_length = (radius - center_radius * 0.5) * pose.openness;
-    let petal_ramp = garden.petal_ramp(flower, pose);
-    let center_ramp = garden.center_ramp(flower, pose);
+    let pink_ramp = garden.petal_ramp(flower, pose);
+    let language_ramps = garden.language_ramps(pose);
+    let has_languages = !language_ramps.is_empty();
+    let center_ramp = garden.center_ramp(pose);
+    // Languages show as a ring of petals behind the pink ones, shared out by code share.
+    let back_ring = has_languages;
+    let (back_scale, back_darkening) = if back_ring {
+        (1.22, 0.08)
+    } else {
+        (1.06, 0.28)
+    };
     let slot = TAU / petal_count as f64;
     let middle = center_radius * 0.55 + petal_length / 2.0;
     let half_length = petal_length / 2.0 + center_radius * 0.45;
@@ -773,8 +858,8 @@ fn paint_flower(canvas: &mut Canvas, garden: &Garden, flower: &Flower, pose: &Po
             };
             let (hit, darkening, offset) = match ring_hit(0.0, 1.0) {
                 Some(hit) => (hit, 0.0, 0.0),
-                None => match ring_hit(slot / 2.0, 1.06) {
-                    Some(hit) => (hit, 0.28, slot / 2.0),
+                None => match ring_hit(slot / 2.0, back_scale) {
+                    Some(hit) => (hit, back_darkening, slot / 2.0),
                     None => return,
                 },
             };
@@ -791,7 +876,14 @@ fn paint_flower(canvas: &mut Canvas, garden: &Garden, flower: &Flower, pose: &Po
             if hit.distance > 0.78 {
                 brightness = 0.02;
             }
-            canvas.set(x, y, shade_with(&petal_ramp, brightness, x, y, 0.4));
+            let in_back = offset != 0.0;
+            let language = flower.petal_languages[hit.petal];
+            let ramp = if back_ring && in_back {
+                &language_ramps[language]
+            } else {
+                &pink_ramp
+            };
+            canvas.set(x, y, shade_with(ramp, brightness, x, y, 0.4));
         },
     );
 }

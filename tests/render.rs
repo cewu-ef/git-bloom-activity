@@ -122,7 +122,7 @@ fn more_commits_grow_more_flowers() {
 }
 
 #[test]
-fn pink_leads_whatever_the_languages() {
+fn pink_leads_and_languages_stay_visible() {
     let frame = render_frame(
         &development(3_000, 5, &[("Go", "#00ADD8", 1.0)]),
         MOODS[0],
@@ -142,7 +142,8 @@ fn pink_leads_whatever_the_languages() {
         .filter(|pixel| pixel[2] > 150 && pixel[0] < 100)
         .count();
     assert!(
-        pink > cyan * 5,
+        pink > cyan,
         "{pink} pink pixels, {cyan} language-colored ones"
     );
+    assert!(cyan > 150, "only {cyan} language-colored pixels");
 }
