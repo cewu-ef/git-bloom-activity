@@ -67,6 +67,97 @@ Things to know:
 - **Scheduled runs pause.** GitHub pauses scheduled workflows after 60 days
   without repository activity. Re-enable it from the Actions tab.
 
+## Demo it to a team
+
+Run it on a laptop against a local clone of the team's repository. Nothing is
+pushed, and each render takes about a second. You need Rust and a GitHub CLI
+signed in with access to the repository.
+
+1. Build once before the meeting:
+
+   ```sh
+   cargo build --release
+   ```
+
+2. Draw the team repository's flower as of yesterday and open the preview, which
+   shows it on GitHub's light and dark backgrounds:
+
+   ```sh
+   ./target/release/git-bloom-activity render \
+     --repo-dir ../path/to/team-repo \
+     --repository ORG/TEAM-REPO \
+     --output-dir /tmp/demo-bloom
+   open /tmp/demo-bloom/preview.html
+   ```
+
+3. Replay earlier days with `--observed-on YYYY-MM-DD`. Commits count only up to
+   that day, so an early date shows a sprout or bud, and a date after a quiet
+   stretch shows resting or wilting. Languages always come from the repository
+   as it is today.
+
+4. Show every stage and mood at once with [docs/stages.png](docs/stages.png).
+
+To prove the Action runs under the organization's settings without writing to
+the repository, push a test branch with a read-only workflow that uploads the
+result as a run artifact. Replace `TEST-BRANCH` with the branch name:
+
+```yaml
+name: Bloom test
+
+on:
+  push:
+    branches: [TEST-BRANCH]
+
+permissions:
+  contents: read
+
+jobs:
+  bloom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: cewu-ef/git-bloom-activity@main
+        with:
+          output-dir: bloom
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bloom
+          path: bloom/
+```
+
+Download the `bloom` artifact from the run and open `preview.html`. Afterwards,
+delete the branch with `git push origin --delete TEST-BRANCH`, and the run with
+`gh run delete RUN-ID` if it should not stay in the Actions tab.
+
+## Roll it out to a team project
+
+1. Open a pull request against the default branch that adds
+   [examples/bloom-workflow.yml](examples/bloom-workflow.yml) as
+   `.github/workflows/bloom.yml`, and this line to the `README.md`:
+
+   ```html
+   <img src="bloom/bloom.gif" width="256" alt="This repository's flower" />
+   ```
+
+   The image stays broken until the first run commits the GIF.
+
+2. Before merging, have the reviewers confirm three settings:
+   - **Branch protection.** The workflow's bot pushes one commit to the default
+     branch each night the flower changes. If the branch requires pull requests,
+     allow GitHub Actions to bypass that rule.
+   - **Workflow permissions.** The workflow asks for `contents: write`. An
+     organization that caps tokens at read-only must allow read and write.
+   - **Allowed actions.** An organization that limits outside actions must allow
+     `cewu-ef/git-bloom-activity`.
+
+3. After merging, run the workflow once from the Actions tab so the first flower
+   appears without waiting for midnight UTC. It then redraws nightly.
+
+The bot's commits never count toward the flower, since commits by GitHub Apps
+are left out.
+
 ## Developing
 
 ```sh
